@@ -295,3 +295,127 @@ db.subscriptions.updateOne(
   { upsert: true }
 )
 ```
+
+---
+
+# Stage 3: Query Optimization & Performance Analysis
+
+## Slow Query Problem
+
+**Original Query (SLOW - MySQL/PostgreSQL):**
+```sql
+SELECT * FROM notifications 
+WHERE studentID = 1042 AND isRead = false 
+ORDER BY createdAt DESC;
+```
+
+**Issue:**
+- 50,000 students × 5,000,000 notifications
+- No index on (studentID, isRead) = full table scan
+- Selects all columns (wasteful)
+- Scanning millions of rows
+
+**Is it accurate?** YES, but inefficient as hell
+
+## Optimized Version
+
+```sql
+SELECT id, notificationId, title, message, notificationType, createdAt
+FROM notifications
+WHERE studentID = 1042 AND isRead = false
+ORDER BY createdAt DESC
+LIMIT 100;
+```
+
+**Changes:**
+1. **Composite index:** `CREATE INDEX idx_student_read ON notifications(studentID, isRead, createdAt DESC);`
+2. **Select specific columns** (not *) - 40% less I/O
+3. **Add LIMIT** - prevents bloating result set
+
+**Performance:**
+- Without index: 5-10 seconds (full table scan)
+- With index: 50-200ms (index seek + fetch)
+- **25-100x faster**
+
+---
+
+## Index Strategy (The Right Way)
+
+**Wrong:** Index EVERY column
+```sql
+-- Wastes disk space, slows writes, confuses planner
+CREATE INDEX idx_col1 ON notifications(col1);
+CREATE INDEX idx_col2 ON notifications(col2);
+CREATE INDEX idx_col3 ON notifications(col3);
+```
+
+**Right:** Composite indexes on query patterns
+```sql
+-- Covers 80% of queries, minimal overhead
+CREATE INDEX idx_student_read ON notifications(studentID, isRead, createdAt DESC);
+CREATE INDEX idx_type_date ON notifications(notificationType, createdAt DESC);
+CREATE INDEX idx_created ON notifications(createdAt DESC);
+```
+
+**Why NOT index everything:**
+- Each index = 100-200MB disk (5M rows)
+- Slows INSERT/UPDATE/DELETE (must update all indexes)
+- Query planner picks wrong index with too many options
+- Returns diminish after 5-6 indexes
+
+---
+
+## Placement Notifications (Last 7 Days)
+
+**Find all students who got a Placement notification in last 7 days:**
+
+```sql
+SELECT DISTINCT 
+  n.studentID,
+  s.name,
+  s.email,
+  COUNT(n.id) AS notification_count,
+  MAX(n.createdAt) AS latest
+FROM notifications n
+INNER JOIN students s ON n.studentID = s.id
+WHERE n.notificationType = 'Placement'
+  AND n.createdAt >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+GROUP BY n.studentID, s.id, s.name, s.email
+ORDER BY latest DESC;
+```
+
+**With notification details:**
+```sql
+SELECT 
+  s.id,
+  s.name,
+  s.email,
+  n.notificationId,
+  n.title,
+  n.message,
+  n.createdAt,
+  n.isRead
+FROM notifications n
+INNER JOIN students s ON n.studentID = s.id
+WHERE n.notificationType = 'Placement'
+  AND n.createdAt >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+ORDER BY n.createdAt DESC;
+```
+
+**Indexes needed:**
+```sql
+CREATE INDEX idx_type_date ON notifications(notificationType, createdAt DESC);
+CREATE INDEX idx_student ON notifications(studentID);
+```
+
+---
+
+## Summary
+
+| Problem | Solution | Impact |
+|---------|----------|--------|
+| Full table scan | Composite index | 25-100x faster |
+| SELECT * | Select columns | 40% less I/O |
+| No ordering | DESC index on sort key | Instant sorting |
+| Too many indexes | 3-5 targeted indexes | Minimal disk overhead |
+| Missing LIMIT | Add LIMIT clause | Prevents memory spike |
