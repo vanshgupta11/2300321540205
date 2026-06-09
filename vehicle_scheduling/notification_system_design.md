@@ -138,25 +138,18 @@ db.subscriptions.createIndex({ userId: 1 }, { unique: true })
 **As millions of user-notification mappings pile up**
 - Solution: TTL index on expiresAt to auto-delete old data
 - Solution: Archive notifications after 90 days to cold storage
-- Solution: Separate collection for read status (user_notifications) prevents replicating data
-
 ### Problem 2: Query Performance Degrades
 **Searching across huge datasets gets slow**
 - Solution: Sharding by userId (ensures data is distributed)
 - Solution: Create indexes on frequently queried fields
-- Solution: Pagination (max 100 records per request)
-
 ### Problem 3: Write Bottlenecks
 **High throughput of notifications slows writes**
 - Solution: Use message queue (Redis/RabbitMQ) before inserting to DB
 - Solution: Batch inserts (insert multiple records at once)
-- Solution: Write replicas for read-heavy operations
-
 ### Problem 4: Real-time Delivery Lag
 **Notifications pile up faster than delivery**
 - Solution: Caching layer (Redis) for hot data
 - Solution: Async write-behind caching
-- Solution: Event streaming (Kafka) for notification distribution
 
 ## Sample Queries (MongoDB)
 
@@ -482,4 +475,57 @@ async function markAsRead(studentID, notificationID) {
   }
 }
 ```
+---
+
+# Stage 5: Bulk Notification & Reliability
+
+## Problem: Notify 50,000 Students
+
+**Naive approach** - Looping 50K iterations, sequentially sending emails, saving to DB, pushing to app.
+
+**Issues:**
+1. Sequential = Takes 5-10 hours for 50K students
+2. Partial failure - Email fails for 200 students, but continues
+3. No retry logic - Failed emails = lost notifications
+4. No atomicity - DB saved but email failed = inconsistent state
+5. No visibility - Can't see which students failed
+6. Timeout - Web request times out before completing
+
+---
+
+## Solution: Async Queue + Retry + Monitoring
+
+**Key approach:**
+- Use message queue (Redis) for job processing
+- Workers process jobs asynchronously
+- Automatic retry logic (3 attempts with exponential backoff)
+- Separate DB save from email (eventual consistency)
+- Status endpoint for progress tracking
+- Dead letter queue for permanent failures
+
+**Expected improvements:**
+- **Speed**: 5-10 hours → 2-5 minutes
+- **Reliability**: No retry → Auto retry 3 times
+- **Consistency**: Partial failures → Logged & captured
+- **Visibility**: Blind → Status endpoint shows progress
+- **Scalability**: 50K students handled in parallel by workers
+
+---
+
+## DB & Email: Together or Separate?
+
+
+
+** Eventual Consistency (Recommended)**
+- Save to DB first (fast, 1-2ms)
+- Send email async (independent retry)
+- Student sees notification immediately
+- Email retries separately if it fails
+
+- Email is external service (unreliable)
+- DB writes must be fast (core operation)
+- User experience better (in-app notif via WebSocket)
+- Retry failures independently (don't impact DB)
+
+
 
