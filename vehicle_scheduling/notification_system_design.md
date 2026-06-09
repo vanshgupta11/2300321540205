@@ -419,3 +419,67 @@ CREATE INDEX idx_student ON notifications(studentID);
 | No ordering | DESC index on sort key | Instant sorting |
 | Too many indexes | 3-5 targeted indexes | Minimal disk overhead |
 | Missing LIMIT | Add LIMIT clause | Prevents memory spike |
+
+---
+# Stage 4:  DB Overwhelmed on Page Load
+
+**Issue:**
+- Every page load = new query to fetch notifications
+- 50,000 students × multiple page loads = millions of DB hits
+- DB connection pool exhausted
+- Response times: 2-5 seconds per request
+
+---
+##  Hybrid Approach
+
+**1. Use Redis caching with 5-minute TTL**
+- Cache hit rate: 80-90% (most users refresh pages within 5 mins)
+- Miss rate: 10-20% (cold cache, new users)
+
+**2. Add pagination (max 20 per page)**
+- Prevents accidental full scans
+- User can click "Load More"
+
+**3. Optimize indexes (already done in Stage 3)**
+- Ensures DB queries are fast on cache miss
+
+**Implementation:**
+```javascript
+const CACHE_TTL = 300; // 5 minutes
+
+async function getNotifications(studentID, page = 1) {
+  const cacheKey = `notif:${studentID}:p${page}`;
+  
+  // Try cache
+  let data = await redis.get(cacheKey);
+  if (data) return JSON.parse(data);
+  
+  // Query with pagination + index
+  data = await db.query(`
+    SELECT id, notificationId, title, message, createdAt, isRead
+    FROM notifications
+    WHERE studentID = ? AND isRead = false
+    ORDER BY createdAt DESC
+    LIMIT 20 OFFSET ?
+  `, [studentID, (page-1)*20]);
+  
+  // Cache it
+  await redis.setex(cacheKey, CACHE_TTL, JSON.stringify(data));
+  
+  return data;
+}
+
+// When notification is marked as read, invalidate cache
+async function markAsRead(studentID, notificationID) {
+  await db.query(`
+    UPDATE notifications SET isRead = true 
+    WHERE id = ? AND studentID = ?
+  `, [notificationID, studentID]);
+  
+  // Clear all cache for this student
+  for (let p = 1; p <= 10; p++) {
+    await redis.del(`notif:${studentID}:p${p}`);
+  }
+}
+```
+
