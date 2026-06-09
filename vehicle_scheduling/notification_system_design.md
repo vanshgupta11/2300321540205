@@ -522,10 +522,105 @@ async function markAsRead(studentID, notificationID) {
 - Student sees notification immediately
 - Email retries separately if it fails
 
+**Why Option 2:**
 - Email is external service (unreliable)
 - DB writes must be fast (core operation)
 - User experience better (in-app notif via WebSocket)
 - Retry failures independently (don't impact DB)
+
+---
+
+# Stage 6: Priority Inbox Implementation
+
+## Problem: Too Many Notifications
+
+**Challenge:**
+- Students get 100+ notifications per day
+- Important notifications buried in the pile
+- Need to surface top 'n' most important notifications first
+- Priority based on: notification type (weight) + recency (timestamp)
+
+---
+## Solution: Priority Scoring Algorithm
+
+**Score formula:**
+```
+priority_score = (type_weight × 0.6) + (recency_factor × 0.4)
+```
+**Type weights:**
+- Placement: 10 (highest - job opportunity)
+- Result: 8 (important - grades/marks)
+- Event: 5 (lower - informational)
+
+**Recency factor:**
+- More recent = higher score
+- Calculated from timestamp vs now
+- Newer notifications prioritized
+
+**Example scoring:**
+```
+Placement from 1 hour ago: (10 × 0.6) + (0.9 × 0.4) = 6.36
+Result from 30 mins ago:   (8 × 0.6) + (0.95 × 0.4) = 5.58
+Event from 2 hours ago:    (5 × 0.6) + (0.7 × 0.4) = 3.80
+```
+
+---
+
+## Efficient Top-N Algorithm
+
+**Problem:** Can't recalculate all notifications every time
+
+**Solution: Min-Heap (Priority Queue)**
+- Keep only top 10 in memory
+- When new notification arrives:
+  1. Calculate priority score
+  2. Compare with lowest score in heap
+  3. If higher, remove lowest, add new one
+  4. Otherwise, discard
+- **Time complexity:** O(log n) per notification
+- **Space complexity:** O(n) for top 10
+
+**vs Naive approach (full sort):**
+- Naive: O(n log n) per notification (recalculates all)
+- Heap: O(log n) per notification (only updates top 10)
+- For 1000 notifications: **100x faster**
+
+---
+
+## Implementation Strategy
+
+**Approach:**
+1. Fetch all notifications from API
+2. Calculate priority score for each
+3. Build min-heap/priority queue of top 10
+4. Display in descending priority order
+5. Monitor heap efficiency
+
+**Expected output format:**
+```
+Priority Inbox (Top 10)
+
+1. [Placement] CSX Corporation hiring - Score: 6.36
+2. [Placement] Google SDE role - Score: 6.28
+3. [Result] Mid-semester grades - Score: 5.58
+4. [Result] Project review - Score: 5.42
+5. [Event] Tech fest - Score: 3.80
+6. [Event] Campus drive - Score: 3.65
+...
+
+Processing: 50 notifications scanned
+Heap operations: 15
+Time: 2.3ms
+```
+---
+
+## Key Considerations
+
+1. **Dynamic scoring** - Weight (type) + Recency (time)
+2. **Efficient heap** - O(log n) updates, not O(n log n) full sorts
+3. **Top 10 display** - Highest priority visible
+4. **Real-time ready** - Can handle incoming notifications
+5. **Performance metrics** - Track heap operations and latency
 
 
 
