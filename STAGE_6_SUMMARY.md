@@ -3,7 +3,7 @@
 ## Output Screenshot Summary
 
 ```
-🔄 Fetching notifications from API...
+🔄 Fetching notifications from API.
 
 ⚠️  API returned no notifications, using mock data...
 
